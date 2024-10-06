@@ -1,0 +1,43 @@
+if (CMAKE_BUILD_TYPE MATCHES "MinSize")
+    message(STATUS "Rust build will be optimized for size")
+    list(APPEND RUSTFLAGS -Copt-level=z)
+endif()
+
+if (CMAKE_BUILD_TYPE MATCHES "WithDebInfo")
+    message(STATUS "Debug info enabled for Rust build")
+    list(APPEND RUSTFLAGS -g)
+endif()
+
+list(APPEND RUSTFLAGS -A dead_code
+                      -A unused_imports
+                      -A redundant_semicolons
+                      -A unused_unsafe)
+
+if (RUST_BUILD_STD)
+    message(STATUS "Building Rust STD from source")
+    set(CARGO_FLAGS ${CARGO_FLAGS} -Zbuild-std)
+    set(Rust_Detect_CARGO_FLAGS ${Rust_Detect_CARGO_FLAGS} -Zbuild-std)
+else()
+    message(STATUS "Using prebuilt Rust STD")
+endif()
+
+set(Rust_Detect_ENV_VARS RUSTC_BOOTSTRAP=${RUSTC_BOOTSTRAP})
+
+if (FULL_RUST_LTO)
+    message(STATUS "Full LTO enabled")
+    list(APPEND RUSTFLAGS -Clto=yes)
+    list(APPEND RUSTFLAGS -Clinker-plugin-lto=yes)
+    list(APPEND RUSTFLAGS -Cembed-bitcode=yes)
+else()
+    message(STATUS "Full LTO disabled")
+    list(APPEND RUSTFLAGS -Clto=no)
+    list(APPEND RUSTFLAGS -Clinker-plugin-lto=no)
+    list(APPEND RUSTFLAGS -Cembed-bitcode=no)
+endif()
+
+message(STATUS "RUSTFLAGS: ${RUSTFLAGS}")
+message(STATUS "CARGO_FLAGS: ${CARGO_FLAGS}")
+
+# Rust/Cargo integration for CMake (aka cmake-cargo)
+# Doc: https://corrosion-rs.github.io/corrosion/
+add_subdirectory(src/corrosion)

@@ -1,0 +1,88 @@
+From 18d027606fe53bbb25fc3faa9cd4c5593af4427d Mon Sep 17 00:00:00 2001
+From: Ookiineko <chiisaineko@protonmail.com>
+Date: Mon, 20 Mar 2023 03:51:40 +0800
+Subject: [PATCH] base: rust: add fd_path impl for other OS
+
+Signed-off-by: Ookiineko <chiisaineko@protonmail.com>
+---
+ native/src/base/files.rs   | 17 +++++++++++++++++
+ native/src/base/Cargo.toml | 3  +++
+ 2 file changed, 20 insertions(+)
+
+diff --git a/native/src/base/files.rs b/native/src/base/files.rs
+index 892d375..25ed2e7 100644
+--- a/native/src/base/files.rs
++++ b/native/src/base/files.rs
+@@ -45,12 +45,58 @@ pub fn readlink(path: &Utf8CStr, data: &mut [u8]) -> io::Result<usize> {
+     };
+ }
+ 
++#[cfg(any(target_os = "android", target_os = "linux",
++          target_os = "cygwin", target_os = "emscripten"))]
+ pub fn fd_path(fd: RawFd, buf: &mut dyn Utf8CStrBuf) -> io::Result<()> {
+     let mut arr = Utf8CStrBufArr::<40>::new();
+     let path = FsPathBuf::new(&mut arr).join("/proc/self/fd").join_fmt(fd);
+     path.read_link(buf)
+ }
+ 
++#[cfg(target_vendor = "apple")]
++pub fn fd_path(fd: RawFd, utf8_buf: &mut dyn Utf8CStrBuf) -> io::Result<()> {
++    unsafe {
++        let buf = utf8_buf.as_str_mut().as_bytes_mut();
++        let mut path_buf: [u8; libc::PATH_MAX as usize] = [0; libc::PATH_MAX as usize];
++        let ret: isize = libc::fcntl(fd, libc::F_GETPATH, path_buf.as_mut_ptr()) as isize;
++        if ret < 0 {
++            return Err(io::Error::last_os_error())
++        }
++        let len = path_buf.iter().position(|&x| x == 0).unwrap();
++        let copy_len: usize = len.min(buf.len().saturating_sub(1));
++        buf[..copy_len].copy_from_slice(&path_buf[..copy_len]);
++        buf.get_mut(copy_len).map(|b| *b = 0);
++        Ok(())
++    }
++}
++
++#[cfg(target_os = "windows")]
++use filepath::FilePath;
++
++#[cfg(target_os = "windows")]
++pub fn fd_path(fd: RawFd, utf8_buf: &mut dyn Utf8CStrBuf) -> io::Result<()> {
++    unsafe {
++        let buf = utf8_buf.as_str_mut().as_bytes_mut();
++        let file = File::from_raw_fd(fd);
++        let path = match file.path() {
++           Ok(p) => p,
++           Err(_) => {
++               return Err(io::Error::last_os_error())
++           }
++       };
++       let path_str = match path.to_str() {
++           Some(s) => s.as_bytes(),
++           None => {
++               return Err(io::Error::last_os_error())
++           }
++       };
++       let bytes_to_copy = path_str.len().min(buf.len().saturating_sub(1));
++       buf[..bytes_to_copy].copy_from_slice(&path_str[..bytes_to_copy]);
++       buf.get_mut(bytes_to_copy).map(|b| *b = 0);
++       Ok(())
++   }
++}
++
+ pub trait ReadExt {
+     fn skip(&mut self, len: usize) -> io::Result<()>;
+     fn read_pod<F: Pod>(&mut self, data: &mut F) -> io::Result<()>;
+diff --git a/native/src/base/Cargo.toml b/native/src/base/Cargo.toml
+index bfb8e57..f89abca 100644
+--- a/native/src/base/Cargo.toml
++++ b/native/src/base/Cargo.toml
+@@ -15,3 +15,6 @@ bytemuck = { workspace = true }
+ num-traits = { workspace = true }
+ num-derive = { workspace = true }
+ const_format = { workspace = true }
++
++[target.'cfg(target_os = "windows")'.dependencies]
++filepath = "0.1.2"
+--
+2.40.0
+

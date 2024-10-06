@@ -1,0 +1,117 @@
+include(CheckSymbolExists)
+check_symbol_exists(
+    "strlcpy"
+    "string.h"
+    HAVE_STRLCPY)
+if (HAVE_STRLCPY)
+    target_compile_definitions(libbase PRIVATE
+        -DHAVE_STRLCPY)
+endif()
+
+add_library(platform_stubs STATIC
+    src/libc-compat/placeholder.c)
+target_include_directories(platform_stubs PUBLIC src/libc-compat/include)
+
+if (NOT HAVE_sendfile)
+    message(STATUS "Using generic sendfile replacement")
+    target_sources(platform_stubs PRIVATE
+        src/libc-compat/non-linux/sendfile_fallback.c)
+endif()
+
+if (NOT HAVE_STRLCPY)
+    message(STATUS "Using bundled libbsd strlcpy implementation")
+    target_sources(platform_stubs PRIVATE
+        src/libc-compat/libbsd/str.c)
+endif()
+
+if(NOT HAVE___errno)
+    target_sources(platform_stubs PRIVATE
+        src/libc-compat/common/__errno.c)
+
+    # e.g Linux and Emscripten
+    check_symbol_exists(__errno_location "errno.h" HAVE___errno_location)
+    if (HAVE___errno_location)
+        set_source_files_properties(src/libc-compat/common/__errno.c PROPERTIES
+                                    COMPILE_FLAGS -DHAVE___errno_location)
+    else()
+        # e.g macOS
+        check_symbol_exists(__error "errno.h" HAVE___error)
+        if (HAVE___error)
+        set_source_files_properties(src/libc-compat/common/__errno.c PROPERTIES
+                                    COMPILE_FLAGS -DHAVE___error)
+        else()
+            # e.g MinGW
+            check_symbol_exists(_errno "errno.h" HAVE__errno)
+            if (HAVE__errno)
+                set_source_files_properties(src/libc-compat/common/__errno.c PROPERTIES
+                                            COMPILE_FLAGS -DHAVE__errno)
+            else()
+                message(FATAL_ERROR "Don't know errno implementation on this platform")
+            endif()
+        endif()
+    endif()
+
+    message(STATUS "Using __errno alias")
+endif()
+
+if (WIN32)
+    message(STATUS "Using win32 libc-compat")
+
+    target_sources(platform_stubs PRIVATE
+        src/libc-compat/winsup/acl.c
+        src/libc-compat/winsup/at.c
+        src/libc-compat/winsup/dirent.c
+        src/libc-compat/winsup/file.c
+        src/libc-compat/winsup/io.c
+        src/libc-compat/winsup/link.c
+        src/libc-compat/winsup/mkdir.c
+        src/libc-compat/winsup/mknod_stub.c
+        src/libc-compat/winsup/open.c
+        src/libc-compat/winsup/stat.c
+        src/libc-compat/winsup/str.c
+        src/libc-compat/winsup/uio.c
+        src/libc-compat/winsup/internal/assert.c
+        src/libc-compat/winsup/internal/errno.c
+        src/libc-compat/winsup/internal/fd.c)
+    target_link_libraries(platform_stubs INTERFACE shlwapi)
+
+    # these source files contains symbols that must not be excluded from the final executable
+    target_sources(magiskboot_exe PRIVATE
+        src/libc-compat/winsup/crt_flags.c)
+
+    add_library(libmman STATIC
+        src/mman-win32/mman.c)
+    target_compile_definitions(libmman PRIVATE -DWITH_WINSUP)
+    target_include_directories(libmman PUBLIC src/mman-win32)
+    target_link_libraries(platform_stubs INTERFACE libmman)
+
+    add_library(libgetline STATIC
+        src/msvc_getline/getline.c)
+    target_include_directories(libgetline PUBLIC src/msvc_getline)
+    target_link_libraries(platform_stubs INTERFACE libgetline)
+
+    target_include_directories(android_libbase PRIVATE src/libc-compat/include)
+
+    # libc-compat overrides
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--wrap=creat -Wl,--wrap=open -Wl,--wrap=fopen")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--wrap=fdopen -Wl,--wrap=fstat -Wl,--wrap=CreateFileW")
+
+    # Rust STD is directly using these
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--wrap=_creat -Wl,--wrap=_open -Wl,--wrap=_fdopen -Wl,--wrap=_fstat64")
+
+    # llvm-mingw uses a different mangling
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--wrap=CreateFileW@28")
+endif()
+
+if (EMSCRIPTEN)
+    message(STATUS "Using Emscripten mmap stubs")
+
+    target_sources(platform_stubs PRIVATE
+        src/libc-compat/emsup/mmap_hack.c)
+
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -sALLOW_MEMORY_GROWTH -Wl,-u,ntohs -Wl,-u,htons -Wl,-u,htonl")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--wrap=close -Wl,--wrap=fclose")
+endif()
+
+target_link_libraries(libbase platform_stubs)
+target_link_libraries(magiskboot_exe platform_stubs)

@@ -1,0 +1,77 @@
+# XXX: Consider using https://cmake.org/cmake/help/v3.0/module/ExternalProject.html
+if(NOT EXISTS ${CMAKE_CURRENT_BINARY_DIR}/.mbb_patched AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/patches")
+    find_program(PATCH_EXECUTABLE patch REQUIRED)
+    message(STATUS "Found patch: ${PATCH_EXECUTABLE}")
+
+    find_package(Git REQUIRED)
+
+    if (${CMAKE_HOST_SYSTEM_NAME} MATCHES "Windows|MSYS")
+        # for searching "find" program, not the win32 one
+        find_program(cygpath_EXECUTABLE cygpath REQUIRED)
+        message(STATUS "Found cygpath: ${cygpath_EXECUTABLE}")
+
+        execute_process(
+            COMMAND ${cygpath_EXECUTABLE} -m /bin
+            OUTPUT_VARIABLE "FIND_FIND_PATH"
+            COMMAND_ERROR_IS_FATAL ANY
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+
+        # for the below quirk
+        find_program(find_EXECUTABLE find REQUIRED PATHS ${FIND_FIND_PATH})
+        message(STATUS "Found find: ${find_EXECUTABLE}")
+    endif()
+
+    set(vendored_dirs
+        Magisk
+        android_logging
+        android_libbase
+        android_core
+        android_fmtlib
+        mman-win32
+        msvc_getline
+        corrosion)
+
+    if (${CMAKE_HOST_SYSTEM_NAME} MATCHES "Windows|MSYS")
+        execute_process(COMMAND ${GIT_EXECUTABLE} submodule foreach --recursive ${GIT_EXECUTABLE} config core.symlinks true
+                        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    endif()
+
+    execute_process(COMMAND ${GIT_EXECUTABLE} submodule update --force --recursive
+                    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    execute_process(COMMAND ${GIT_EXECUTABLE} submodule foreach --recursive ${GIT_EXECUTABLE} clean -fd
+                    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+    if (${CMAKE_HOST_SYSTEM_NAME} MATCHES "Windows|MSYS")
+        # HACK: On Windows, symlinks have two different types: file and directory,
+        #       if the target path doesn't exist when the symlink is created,
+        #       Cygwin will fallback to create a non-native link, which makes the
+        #       symlink unusable to pure Win32 apps (e.g. our compilers) later.
+        #
+        #       Since the target path may not exist at the time of creation, we can fix
+        #       this by deleting all the symlinks after the first checkout and
+        #       letting Git to re-create them for us.
+        execute_process(COMMAND ${find_EXECUTABLE} -type l -exec rm -f {} +
+                        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        execute_process(COMMAND ${GIT_EXECUTABLE} submodule update --force --recursive
+                        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    endif()
+
+    foreach(vendored_dir ${vendored_dirs})
+        file(GLOB patches ${CMAKE_CURRENT_SOURCE_DIR}/patches/${vendored_dir}/*.patch)
+        if(patches)
+            foreach(patch_filename ${patches})
+                message(STATUS "Applying ${patch_filename} for: ${vendored_dir}")
+                execute_process(COMMAND ${PATCH_EXECUTABLE} -p1 -i ${patch_filename} --no-backup-if-mismatch
+                    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/${vendored_dir}
+                                RESULT_VARIABLE ret)
+
+                if(NOT ret STREQUAL "0")
+                    message(FATAL_ERROR "Couldn't apply ${patch_filename} for ${vendored_dir}")
+                endif()
+            endforeach()
+        endif()
+    endforeach()
+
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/.mbb_patched "")
+endif()
