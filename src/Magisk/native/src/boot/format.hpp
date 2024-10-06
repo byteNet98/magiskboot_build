@@ -9,12 +9,7 @@ typedef enum {
     AOSP,
     AOSP_VENDOR,
     DHTB,
-#ifdef _WIN32
-    FORMAT_BLOB,
-#   define BLOB FORMAT_BLOB
-#else
     BLOB,
-#endif
 /* Compression formats */
     GZIP,
     ZOPFLI,

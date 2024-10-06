@@ -1,11 +1,6 @@
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
-
-#[cfg(not(target_os = "windows"))]
 use std::os::fd::{AsRawFd, FromRawFd};
-
-#[cfg(target_os = "windows")]
-use winsup::fd::{AsRawFd, FromRawFd};
 
 use byteorder::{BigEndian, ReadBytesExt};
 use quick_protobuf::{BytesReader, MessageRead};

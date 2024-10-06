@@ -175,9 +175,8 @@ Supported commands:
   extract [ENTRY OUT]
     Extract ENTRY to OUT, or extract all entries to current directory
   test
-    Test the cpio's status
-    Return value is 0 or bitwise or-ed of following values:
-    0x1:Magisk    0x2:unsupported
+    Test the cpio's status. Return values:
+    0:stock    1:Magisk    2:unsupported
   patch
     Apply ramdisk patches
     Configure with env variables: KEEPVERITY KEEPFORCEENCRYPT
@@ -366,7 +365,7 @@ impl Cpio {
                 FsPath::from(&buf).symlink_to(out)?;
             }
             S_IFBLK | S_IFCHR => {
-                let dev = unsafe { makedev(entry.rdevmajor.try_into()?, entry.rdevminor.try_into()?) };
+                let dev = makedev(entry.rdevmajor.try_into()?, entry.rdevminor.try_into()?);
                 unsafe { mknod(out.as_ptr().cast(), entry.mode, dev) };
             }
             _ => {
@@ -407,7 +406,8 @@ impl Cpio {
         let rdevmajor: dev_t;
         let rdevminor: dev_t;
 
-        let mode = if attr.is_file() {
+        // Treat symlinks as regular files as symlinks are created by the 'ln TARGET ENTRY' command
+        let mode = if attr.is_file() || attr.is_symlink() {
             rdevmajor = 0;
             rdevminor = 0;
             file.open(O_RDONLY | O_CLOEXEC)?.read_to_end(&mut content)?;
@@ -543,7 +543,6 @@ impl Cpio {
     }
 
     fn test(&self) -> i32 {
-        let mut ret = 0;
         for file in [
             "sbin/launch_daemonsu.sh",
             "sbin/su",
@@ -560,11 +559,10 @@ impl Cpio {
             "overlay/init.magisk.rc",
         ] {
             if self.exists(file) {
-                ret |= MAGISK_PATCHED;
-                break;
+                return MAGISK_PATCHED;
             }
         }
-        ret
+        0
     }
 
     fn restore(&mut self) -> LoggedResult<()> {
